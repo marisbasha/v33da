@@ -1,0 +1,28 @@
+data:
+  dataset_dir: ./data/v33da  # override via V33DA_DATA_DIR or --dataset-dir
+  batch_size: 64
+  num_workers: 4
+
+model:
+  audio_encoder: melspec    # melspec | aves | whisper
+  modality: audio_3d_radio  # audio_only | audio_3d | audio_3d_radio
+  d_model: 256
+  n_decoder_layers: 2
+  n_heads: 4
+  dropout: 0.1
+  sample_rate: 24414
+  n_mels: 80
+  n_mics: 5  # 5 cage mics (Mic6-7 are nest mics, skipped)
+  ref_mic: 0
+
+training:
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  n_epochs: 50
+  patience: 10
+  warmup_epochs: 5
+  lambda_ce: 1.0
+  lambda_l2: 0.01
+
+evaluation:
+  distance_bins: [0, 50, 100, 200, 500]

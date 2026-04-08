@@ -1,0 +1,3 @@
+model:
+  audio_encoder: whisper
+  modality: audio_3d_radio
