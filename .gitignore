@@ -7,8 +7,9 @@ build/
 .eggs/
 *.so
 
-# Data (downloaded separately)
-data/
+# Data (downloaded separately, except the tiny committed sample)
+data/*
+!data/v33da_sample/
 splits/
 cache/
 runs/

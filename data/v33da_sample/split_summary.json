@@ -1,0 +1,44 @@
+{
+  "dataset_root": "/home/songbird/code/v33da/data/v33da",
+  "total_rows": 33625,
+  "session_split_counts": {
+    "test": 7391,
+    "train": 19365,
+    "val": 6869
+  },
+  "generalization_split_counts": {
+    "test": 5829,
+    "train": 21491,
+    "val": 6305
+  },
+  "session_by_experiment": {
+    "train": {
+      "juvExpBP01": 12881,
+      "juvExpBP02": 4455,
+      "juvExpBP05": 2029
+    },
+    "val": {
+      "juvExpBP01": 1008,
+      "juvExpBP02": 4155,
+      "juvExpBP05": 1706
+    },
+    "test": {
+      "juvExpBP01": 2330,
+      "juvExpBP02": 2967,
+      "juvExpBP05": 2094
+    }
+  },
+  "generalization_by_experiment": {
+    "train": {
+      "juvExpBP01": 12881,
+      "juvExpBP02": 8610
+    },
+    "val": {
+      "juvExpBP01": 3338,
+      "juvExpBP02": 2967
+    },
+    "test": {
+      "juvExpBP05": 5829
+    }
+  }
+}

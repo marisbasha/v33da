@@ -85,11 +85,8 @@ class SELDnetPPOpen(nn.Module):
         )
 
     def encode_audio(self, audio):
-        """Encode audio to pooled embedding. Mel on CPU for STFT compat."""
-        device = audio.device
-        audio_cpu = audio.cpu()
-        mels = torch.stack([self.mel(audio_cpu[:, mi]) for mi in range(self.n_mics)], dim=1)
-        mels = mels.to(device)
+        """Encode audio to pooled embedding."""
+        mels = torch.stack([self.mel(audio[:, mi]) for mi in range(self.n_mics)], dim=1)
         mels = (mels - mels.mean(dim=(2, 3), keepdim=True)) / (mels.std(dim=(2, 3), keepdim=True) + 1e-8)
         x = self.cnn(mels).squeeze(2).permute(0, 2, 1)
         x, _ = self.gru(x)

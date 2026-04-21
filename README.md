@@ -11,6 +11,18 @@
 | Days | 10 | 3 | 3 | 16 |
 | Raw hours | ~46h | ~14h | ~14h | ~74h |
 
+## Sample dataset and walkthrough
+
+A self-contained 100-event sample ships with the repository at `data/v33da_sample/` (~60 MB, stratified across all three experiments). After a plain `pip install -e .` the notebook at `notebooks/walkthrough.ipynb` loads the sample and visualizes every modality (audio, accelerometer oracle, 3D pose, radio telemetry) for a single event.
+
+```bash
+pip install -e .
+pip install matplotlib jupyter
+jupyter notebook notebooks/walkthrough.ipynb
+```
+
+To regenerate or resize the sample against the full dataset, use `scripts/build_sample.py`.
+
 ## Quick start
 
 ### 1. Install
@@ -134,6 +146,19 @@ scripts/
 ## Hardware
 
 All experiments in the paper were run on a single NVIDIA RTX 3090 (24 GB). Total compute: ~53 GPU-hours.
+
+## Citation
+
+If you use V33DA, please cite:
+
+```bibtex
+@unpublished{basha2026v33da,
+  title  = {Who Called? V33DA: A Multimodal Benchmark for Transferable Spatial Vocal Attribution in Social Zebra Finches},
+  author = {Basha, Maris and Wang, Yuhang and Chen, Xiaoran and Cheng, Longbiao and Yapura, Luca and Zai, Anja T. and Salzmann, Mathieu and Hahnloser, Richard},
+  year   = {2026},
+  note   = {Under review},
+}
+```
 
 ## License
 

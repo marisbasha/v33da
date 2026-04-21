@@ -1,0 +1,103 @@
+{
+  "dataset_name": "v33da",
+  "per_bird_limit": null,
+  "num_rows": 33625,
+  "experiments": {
+    "juvExpBP01": {
+      "bird_names": [
+        "red",
+        "peach",
+        "white",
+        "blue"
+      ]
+    },
+    "juvExpBP02": {
+      "bird_names": [
+        "red",
+        "peach",
+        "blue"
+      ]
+    },
+    "juvExpBP05": {
+      "bird_names": [
+        "purple",
+        "red",
+        "yellow",
+        "brown"
+      ]
+    }
+  },
+  "groups": {
+    "juvExpBP01/blue": 5735,
+    "juvExpBP01/peach": 2277,
+    "juvExpBP01/red": 3963,
+    "juvExpBP01/white": 4244,
+    "juvExpBP02/blue": 4923,
+    "juvExpBP02/peach": 4589,
+    "juvExpBP02/red": 2065,
+    "juvExpBP05/brown": 56,
+    "juvExpBP05/purple": 2140,
+    "juvExpBP05/yellow": 3633
+  },
+  "schema": [
+    "id",
+    "experiment",
+    "date",
+    "video_stem",
+    "bird_name",
+    "bird_color",
+    "vocalizer_idx",
+    "n_frames",
+    "keypoints_3d",
+    "keypoints_2d_top",
+    "keypoints_2d_back",
+    "audio",
+    "audio_path",
+    "accelerometer",
+    "accelerometer_path",
+    "video_path",
+    "radio_frq",
+    "radio_thetaS",
+    "radio_thetaA",
+    "radio_thetaB",
+    "radio_thetaC",
+    "radio_thetaD",
+    "radio_phiA",
+    "radio_phiB",
+    "radio_phiC",
+    "radio_phiD",
+    "radio_phiM",
+    "radio_powRA",
+    "radio_powRB",
+    "radio_powRC",
+    "radio_powRD",
+    "radio_powRM",
+    "radio_powNA",
+    "radio_powNB",
+    "radio_powNC",
+    "radio_powND",
+    "radio_powNM"
+  ],
+  "filters": {
+    "max_reproj_error_px": 40.0,
+    "max_global_displacement_px": null,
+    "max_intra_frame_displacement_px": 40.0,
+    "motion_filter_mode": "frame_to_frame_only",
+    "nan_policy": "drop_rows_with_any_nan_in_3d_or_2d",
+    "overlap_pad_sec": 0.01
+  },
+  "overlap_removed_before_build": 3784,
+  "frames": {
+    "description": "Full composite video chunks aligned to each vocalization window",
+    "format": "MP4 (mp4v codec)",
+    "frame_rate_hz": 47.6837158203125,
+    "pad_frames": 1
+  },
+  "external_media": {
+    "audio_rows_with_paths": 33625,
+    "accelerometer_rows_with_paths": 33625,
+    "video_rows_with_paths": 33625,
+    "media_jobs_path": "media_jobs.jsonl",
+    "media_results_path": "media_results.jsonl"
+  }
+}

@@ -52,6 +52,46 @@ from v33da.evaluation.metrics import attribution_accuracy, localization_error, m
 BOUNDS = np.array([CAGE_X, CAGE_Y, CAGE_Z], dtype=np.float32)
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
+# Models that consume candidate geometry (position and/or head orientation).
+GEOMETRY_AWARE_MODELS = {
+    "spatial_scorer", "neural_srp", "contrastive", "pairrank",
+    "beam_fusion", "seldnet_plus", "seldnet_pp_open",
+    "pose_motion", "video_candidate",
+    "accdoa", "einv2", "cstformer",
+}
+
+
+def _rotate_unit_vectors(vecs: torch.Tensor, sigma_rad: float) -> torch.Tensor:
+    """Apply axis-angle rotations with Gaussian-σ angle to per-row unit vectors."""
+    shape = vecs.shape
+    flat = vecs.reshape(-1, 3)
+    axes = torch.randn_like(flat)
+    axes = axes / (axes.norm(dim=-1, keepdim=True) + 1e-8)
+    angles = torch.randn(flat.shape[0], device=flat.device) * sigma_rad
+    cos = angles.cos().unsqueeze(-1)
+    sin = angles.sin().unsqueeze(-1)
+    dot = (axes * flat).sum(dim=-1, keepdim=True)
+    cross = torch.cross(axes, flat, dim=-1)
+    rotated = flat * cos + cross * sin + axes * dot * (1 - cos)
+    return (rotated / rotated.norm(dim=-1, keepdim=True).clamp_min(1e-8)).reshape(shape)
+
+
+def _perturb_batch(batch: dict, pos_sigma_norm, orient_sigma_rad: float) -> dict:
+    if pos_sigma_norm is not None and "bird_positions" in batch:
+        noise = torch.randn_like(batch["bird_positions"]) * pos_sigma_norm
+        batch["bird_positions"] = (batch["bird_positions"] + noise).clamp(0.0, 1.0)
+    if orient_sigma_rad > 0 and "bird_head_orient" in batch:
+        batch["bird_head_orient"] = _rotate_unit_vectors(
+            batch["bird_head_orient"], orient_sigma_rad
+        )
+    return batch
+
+
+def _parse_sigma_list(spec: str) -> list[float]:
+    if not spec:
+        return []
+    return [float(x.strip()) for x in spec.split(",") if x.strip()]
+
 
 # ---------------------------------------------------------------------------
 # Model registry
@@ -65,6 +105,11 @@ def _build_seldnet(n_birds, **kw):
 def _build_seldnet_plus(n_birds, use_radio=True, **kw):
     from v33da.models.seldnet_plus import SELDnetPlus
     return SELDnetPlus(n_mics=5, use_radio=use_radio, n_radio_channels=7)
+
+
+def _build_seldnet_pp_open(n_birds, **kw):
+    from v33da.baselines.seldnet_pp_open import SELDnetPPOpen
+    return SELDnetPPOpen(n_mics=5)
 
 
 def _build_spatial_scorer(n_birds, use_radio=True, n_experiments=1, **kw):
@@ -116,6 +161,7 @@ def _build_literature(n_birds, variant="accdoa", **kw):
 MODEL_REGISTRY = {
     "seldnet":          dict(build=_build_seldnet, epochs=50, lr=1e-4, bs=64),
     "seldnet_plus":     dict(build=_build_seldnet_plus, epochs=60, lr=1e-4, bs=64),
+    "seldnet_pp_open":  dict(build=_build_seldnet_pp_open, epochs=8, lr=1e-4, bs=16),
     "spatial_scorer":   dict(build=_build_spatial_scorer, epochs=8, lr=1e-4, bs=16, lambda_adv=0.05),
     "contrastive":      dict(build=_build_contrastive, epochs=8, lr=1e-4, bs=16),
     "pairrank":         dict(build=_build_pairrank, epochs=8, lr=1e-4, bs=16, wd=1e-2),
@@ -138,23 +184,41 @@ def denorm(pos):
     return pos * (BOUNDS[:, 1] - BOUNDS[:, 0]) + BOUNDS[:, 0]
 
 
+def _infer_n_birds(ds) -> int:
+    """Infer max candidate count from a dataset by probing a few samples."""
+    n = min(len(ds), 64)
+    best = 1
+    for i in range(n):
+        k = int(ds[i]["n_birds"])
+        if k > best:
+            best = k
+    return best
+
+
+def _set_mode(ds, **flags):
+    """Set dataset return_* flags if present (forwards to wrappers too)."""
+    for k, v in flags.items():
+        attr = f"return_{k}" if not k.startswith("return_") else k
+        for target in (ds, getattr(ds, "base", None), getattr(ds, "bases", None)):
+            if target is None:
+                continue
+            if isinstance(target, dict):
+                for sub in target.values():
+                    if hasattr(sub, attr):
+                        setattr(sub, attr, v)
+            elif hasattr(target, attr):
+                setattr(target, attr, v)
+
+
 def mutate_dataset_for_model(ds, model_name, args):
-    """Apply model-specific dataset mutations."""
+    """Apply model-specific dataset return-flag mutations."""
     if model_name == "pose_motion":
-        ds.use_audio = False
-        ds.use_accel = False
-        ds.use_radio = False
-        ds.use_pose_temporal = True
+        _set_mode(ds, audio=False, accelerometer=False, radio_temporal=False, pose_temporal=True)
     elif model_name == "video_candidate":
-        ds.use_audio = False
-        ds.use_accel = False
-        ds.use_radio = False
-        ds.use_pose_temporal = False
-        ds.use_video_candidate = True
-        ds.video_crop_size = getattr(args, "crop_size", 32)
-        ds.video_n_frames = getattr(args, "video_frames", 4)
+        _set_mode(ds, audio=False, accelerometer=False, radio_temporal=False,
+                  pose_temporal=False, video_candidate=True)
     elif model_name == "accel_oracle":
-        ds.use_accel = True
+        _set_mode(ds, accelerometer=True)
 
 
 # ---------------------------------------------------------------------------
@@ -163,37 +227,28 @@ def mutate_dataset_for_model(ds, model_name, args):
 
 def compute_loss(model_name, out, batch, args):
     """Compute loss for a model. Returns (total_loss, n_correct)."""
-    labels = batch["label"].to(DEVICE)
+    labels = batch["label_idx"].to(DEVICE)
 
     if model_name == "pairrank":
         from v33da.models.pairrank import pairrank_loss
-        loss, correct = pairrank_loss(out, batch)
-        return loss, correct.item()
+        loss, _ = pairrank_loss(out, batch)
+        preds = out["logits"].argmax(dim=-1)
+        correct = int((preds == labels).sum().item())
+        return loss, correct
 
     if model_name == "accel_oracle":
         from v33da.models.accel_oracle import accel_oracle_loss
-        loss, correct = accel_oracle_loss(out, batch)
-        return loss, correct.item()
+        loss = accel_oracle_loss(out, batch)
+        preds = out["logits"].argmax(dim=-1)
+        correct = int((preds == labels).sum().item())
+        return loss, correct
 
     if model_name in ("accdoa", "einv2", "cstformer"):
         from v33da.models.literature_seld import literature_loss
-        variant = model_name
-        if hasattr(args, "radio_ctx") and args.radio_ctx:
-            variant += "_radioctx"
-        loss = literature_loss(variant, out, batch, BOUNDS, DEVICE)
-        # attribution from model output
-        if "logits" in out:
-            preds = out["logits"].argmax(dim=-1)
-        elif "position" in out:
-            pred_pos = out["position"].detach().cpu().numpy()
-            cand_pos = batch["candidate_positions"].numpy()
-            preds = torch.tensor([
-                np.argmin(np.linalg.norm(cand_pos[i] - pred_pos[i], axis=-1))
-                for i in range(len(pred_pos))
-            ])
-        else:
-            preds = labels  # fallback
-        correct = (preds.to(labels.device) == labels).sum().item()
+        lambda_loc = getattr(args, "lambda_loc", 0.05)
+        loss, _ = literature_loss(model_name, out, batch, lambda_loc=lambda_loc)
+        preds = out["logits"].argmax(dim=-1)
+        correct = int((preds == labels).sum().item())
         return loss, correct
 
     # Default: CE + optional localization MSE
@@ -201,20 +256,13 @@ def compute_loss(model_name, out, batch, args):
     ls = 0.1 if model_name == "spatial_scorer" else 0.0
     loss = F.cross_entropy(logits, labels, label_smoothing=ls)
 
-    if "position" in out and "target_position" in batch:
-        tgt = batch["target_position"].to(DEVICE)
+    if "pred_position" in out and "label_position" in batch:
+        tgt = batch["label_position"].to(DEVICE)
         lambda_loc = getattr(args, "lambda_loc", 0.05)
-        loss = loss + lambda_loc * F.mse_loss(out["position"], tgt)
-
-    if model_name == "spatial_scorer" and "exp_logits" in out:
-        exp_labels = batch.get("experiment_idx")
-        if exp_labels is not None:
-            lambda_adv = getattr(args, "lambda_adv", 0.05)
-            adv_loss = F.cross_entropy(out["exp_logits"], exp_labels.to(DEVICE))
-            loss = loss + lambda_adv * adv_loss
+        loss = loss + lambda_loc * F.mse_loss(out["pred_position"], tgt)
 
     preds = logits.argmax(dim=-1)
-    correct = (preds == labels).sum().item()
+    correct = int((preds == labels).sum().item())
     return loss, correct
 
 
@@ -244,7 +292,7 @@ def train_one_run(model_name, train_ds, val_ds, args, seed, extra_kw=None):
                             num_workers=args.num_workers,
                             collate_fn=v33da_collate_fn, pin_memory=True)
 
-    build_kw = dict(n_birds=len(set(train_ds.bird_names)),
+    build_kw = dict(n_birds=_infer_n_birds(train_ds),
                     use_radio=not getattr(args, "no_radio", False))
     if extra_kw:
         build_kw.update(extra_kw)
@@ -271,9 +319,9 @@ def train_one_run(model_name, train_ds, val_ds, args, seed, extra_kw=None):
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
-            train_loss += loss.item() * batch["label"].size(0)
+            train_loss += loss.item() * batch["label_idx"].size(0)
             train_correct += correct
-            train_total += batch["label"].size(0)
+            train_total += batch["label_idx"].size(0)
         scheduler.step()
 
         # --- Validate ---
@@ -287,7 +335,7 @@ def train_one_run(model_name, train_ds, val_ds, args, seed, extra_kw=None):
                 out = model(batch)
                 _, correct = compute_loss(model_name, out, batch, args)
                 val_correct += correct
-                val_total += batch["label"].size(0)
+                val_total += batch["label_idx"].size(0)
 
         val_acc = val_correct / max(val_total, 1)
         train_acc = train_correct / max(train_total, 1)
@@ -306,7 +354,31 @@ def train_one_run(model_name, train_ds, val_ds, args, seed, extra_kw=None):
             print(f"  Early stop at epoch {epoch+1}")
             break
 
-    return {"best_val_acc": best_acc, "n_params": n_params}
+    if best_state is not None:
+        model.load_state_dict(best_state)
+    return {"best_val_acc": best_acc, "n_params": n_params}, model
+
+
+def evaluate_on_loader(model, model_name, loader, args,
+                       perturb_pos_cm: float = 0.0,
+                       perturb_orient_deg: float = 0.0) -> float:
+    """Return attribution accuracy on a loader, optionally under perturbed geometry."""
+    model.eval()
+    bound_range = torch.tensor(BOUNDS[:, 1] - BOUNDS[:, 0], device=DEVICE, dtype=torch.float32)
+    pos_sigma_norm = (perturb_pos_cm * 10.0) / bound_range if perturb_pos_cm > 0 else None
+    orient_sigma_rad = float(np.deg2rad(perturb_orient_deg)) if perturb_orient_deg > 0 else 0.0
+    correct, total = 0, 0
+    with torch.no_grad():
+        for batch in loader:
+            for k, v in batch.items():
+                if isinstance(v, torch.Tensor):
+                    batch[k] = v.to(DEVICE)
+            batch = _perturb_batch(batch, pos_sigma_norm, orient_sigma_rad)
+            out = model(batch)
+            _, c = compute_loss(model_name, out, batch, args)
+            correct += c
+            total += batch["label_idx"].size(0)
+    return correct / max(total, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -318,6 +390,10 @@ def run_split_matrix(model_name, args):
     seeds = [42, 123, 456]
     all_results = []
 
+    pos_sigmas = _parse_sigma_list(getattr(args, "perturb_pos_cm", ""))
+    orient_sigmas = _parse_sigma_list(getattr(args, "perturb_orient_deg", ""))
+    run_perturb = (pos_sigmas or orient_sigmas) and model_name in GEOMETRY_AWARE_MODELS
+
     def run_one_config(train_ds, val_ds, test_ds, config_name, extra_kw=None):
         print(f"\n{'='*60}")
         print(f"  {model_name} | {config_name}")
@@ -327,7 +403,32 @@ def run_split_matrix(model_name, args):
         seed_results = []
         for seed in seeds:
             print(f"\n  Seed {seed}:")
-            result = train_one_run(model_name, train_ds, val_ds, args, seed, extra_kw)
+            result, trained_model = train_one_run(model_name, train_ds, val_ds, args, seed, extra_kw)
+            if run_perturb:
+                mutate_dataset_for_model(test_ds, model_name, args)
+                test_loader = DataLoader(
+                    test_ds, batch_size=MODEL_REGISTRY[model_name].get("bs", 16),
+                    shuffle=False, num_workers=args.num_workers,
+                    collate_fn=v33da_collate_fn, pin_memory=True,
+                )
+                result["clean_test_acc"] = evaluate_on_loader(trained_model, model_name, test_loader, args)
+                print(f"    clean test_acc={result['clean_test_acc']:.3f}")
+                result["perturb_pos_cm"] = {}
+                for sigma in pos_sigmas:
+                    torch.manual_seed(seed)
+                    acc = evaluate_on_loader(trained_model, model_name, test_loader, args,
+                                             perturb_pos_cm=sigma)
+                    result["perturb_pos_cm"][f"{sigma}"] = acc
+                    print(f"    perturb pos σ={sigma}cm: acc={acc:.3f}")
+                result["perturb_orient_deg"] = {}
+                for sigma in orient_sigmas:
+                    torch.manual_seed(seed)
+                    acc = evaluate_on_loader(trained_model, model_name, test_loader, args,
+                                             perturb_orient_deg=sigma)
+                    result["perturb_orient_deg"][f"{sigma}"] = acc
+                    print(f"    perturb orient σ={sigma}°: acc={acc:.3f}")
+                del test_loader
+            del trained_model
             seed_results.append(result)
 
         accs = [r["best_val_acc"] for r in seed_results]
@@ -343,11 +444,12 @@ def run_split_matrix(model_name, args):
 
     split = args.split
     if split in ("session", "both"):
-        train_ds, val_ds, test_ds = load_split_triplet("session")
+        train_ds, val_ds, test_ds, _ = load_split_triplet("session")
         run_one_config(train_ds, val_ds, test_ds, "session")
 
     if split in ("heldout_experiment", "both"):
-        for exp_name, train_ds, val_ds, test_ds in iter_requested_experiments(args.heldout_experiment):
+        for exp_name in iter_requested_experiments(args.heldout_experiment):
+            train_ds, val_ds, test_ds, _ = load_split_triplet("heldout_experiment", exp_name)
             extra_kw = {}
             if model_name == "spatial_scorer":
                 extra_kw["n_experiments"] = len(dataset_experiment_counts(train_ds))
@@ -355,8 +457,15 @@ def run_split_matrix(model_name, args):
                            f"heldout_{short_experiment_name(exp_name)}", extra_kw)
 
     if split in ("loo", "leave_one_bird_out", "both"):
-        for bird_name, train_ds, val_ds, test_ds in iter_requested_birds(args.heldout_bird):
-            run_one_config(train_ds, val_ds, test_ds, f"loo_{bird_name}")
+        for exp_name in iter_requested_experiments(args.heldout_experiment):
+            for bird_idx in iter_requested_birds(exp_name, args.heldout_bird):
+                train_ds, val_ds, test_ds, _ = load_split_triplet(
+                    "leave_one_bird_out", exp_name, bird_idx,
+                )
+                run_one_config(
+                    train_ds, val_ds, test_ds,
+                    f"loo_{short_experiment_name(exp_name)}_bird{bird_idx}",
+                )
 
     return all_results
 
@@ -366,42 +475,40 @@ def run_split_matrix(model_name, args):
 # ---------------------------------------------------------------------------
 
 def run_deterministic_baselines(args):
-    """Run Random, Majority, SRP baselines (no training)."""
-    from itertools import combinations
+    """Run Random, SRP baselines (no training)."""
     from v33da.baselines.srp_phat import SRPPHATBaseline
 
     results = []
-    for split_name in ("session", "heldout_experiment", "loo"):
-        if args.split not in (split_name, "both"):
-            continue
-        if split_name == "session":
-            configs = [("session", *load_split_triplet("session"))]
-        elif split_name == "heldout_experiment":
-            configs = [(f"heldout_{short_experiment_name(e)}", tr, va, te)
-                       for e, tr, va, te in iter_requested_experiments(args.heldout_experiment)]
-        else:
-            configs = [(f"loo_{b}", tr, va, te)
-                       for b, tr, va, te in iter_requested_birds(args.heldout_bird)]
+    configs = []
+    if args.split in ("session", "both"):
+        _, _, te, _ = load_split_triplet("session")
+        configs.append(("session", te))
+    if args.split in ("heldout_experiment", "both"):
+        for exp in iter_requested_experiments(args.heldout_experiment):
+            _, _, te, _ = load_split_triplet("heldout_experiment", exp)
+            configs.append((f"heldout_{short_experiment_name(exp)}", te))
+    if args.split in ("loo", "leave_one_bird_out", "both"):
+        for exp in iter_requested_experiments(args.heldout_experiment):
+            for bird in iter_requested_birds(exp, args.heldout_bird):
+                _, _, te, _ = load_split_triplet("leave_one_bird_out", exp, bird)
+                configs.append((f"loo_{short_experiment_name(exp)}_bird{bird}", te))
 
-        for config_name, train_ds, val_ds, test_ds in configs:
-            n_test = len(test_ds)
-            # Random
-            labels = np.array([test_ds[i]["label"] for i in range(n_test)])
-            n_cands = np.array([test_ds[i]["n_candidates"] for i in range(n_test)])
-            random_acc = float(np.mean(1.0 / n_cands))
-            results.append({"model": "random", "config": config_name, "acc": random_acc})
+    for config_name, test_ds in configs:
+        n_test = len(test_ds)
+        n_cands = np.array([test_ds[i]["n_birds"] for i in range(n_test)])
+        random_acc = float(np.mean(1.0 / np.maximum(n_cands, 1)))
+        results.append({"model": "random", "config": config_name, "acc": random_acc})
 
-            # SRP
-            srp = SRPPHATBaseline(mic_positions=MIC_POSITIONS, sample_rate=24414, half_window=20)
-            srp_correct = 0
-            for i in range(n_test):
-                sample = test_ds[i]
-                pred = srp.predict(sample)
-                if pred == sample["label"]:
-                    srp_correct += 1
-            srp_acc = srp_correct / n_test
-            results.append({"model": "srp", "config": config_name, "acc": srp_acc})
-            print(f"  {config_name}: random={random_acc:.3f} srp={srp_acc:.3f}")
+        srp = SRPPHATBaseline(mic_positions=MIC_POSITIONS, sample_rate=24414, half_window=20)
+        srp_correct = 0
+        for i in range(n_test):
+            sample = test_ds[i]
+            pred = srp.predict(sample)
+            if pred == sample["label_idx"]:
+                srp_correct += 1
+        srp_acc = srp_correct / max(n_test, 1)
+        results.append({"model": "srp", "config": config_name, "acc": srp_acc})
+        print(f"  {config_name}: random={random_acc:.3f} srp={srp_acc:.3f}")
 
     return results
 
@@ -435,6 +542,10 @@ Examples:
     p.add_argument("--lambda-adv", type=float, default=0.05)
     p.add_argument("--tag", default="")
     p.add_argument("--output-dir", type=Path, default=Path("results"))
+    p.add_argument("--perturb-pos-cm", default="",
+                   help="Comma-separated σ values (cm) for Gaussian 3D position perturbation at test time.")
+    p.add_argument("--perturb-orient-deg", default="",
+                   help="Comma-separated σ values (deg) for head-orientation perturbation at test time.")
     return p.parse_args()
 
 
