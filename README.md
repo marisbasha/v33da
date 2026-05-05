@@ -1,8 +1,8 @@
-# V33DA: A Multi-Modal Benchmark for Vocal Attribution in Freely Interacting Zebra Finches
+# Who Called? V33DA: A Physically Verified Multimodal Benchmark for Vocal Attribution in Zebra Finch Groups
 
-**V33DA** (**V**ocal **3**-Experiment **3D** **A**ttribution) is the first benchmark for attributing vocalizations to individual birds in a freely interacting group, using synchronized multi-modal recordings: 5-channel audio, multi-view video, 3D pose, and FM radio telemetry.
+**V33DA** is a multimodal benchmark for spatial vocal attribution in social zebra finches: 33,625 verified vocalization events from 10 individually identified birds across 3 experiments, each with synchronized 5-channel audio, three camera views, calibrated 3D pose for every visible candidate, per-bird FM radio telemetry, and an on-body accelerometer-derived oracle channel that anchors caller labels.
 
-> **Task.** Given a detected vocalization and the set of birds visible at that moment, determine which bird produced the call.
+> **Task.** Given a detected vocalization and the set of birds visible at that moment, determine which bird produced the call. Caller identity is verified physically from on-body vibration; the accelerometer channel is withheld from benchmark models and used only by an oracle ceiling.
 
 | | BP01 | BP02 | BP05 | Total |
 |---|---|---|---|---|
@@ -11,19 +11,66 @@
 | Days | 10 | 3 | 3 | 16 |
 | Raw hours | ~46h | ~14h | ~14h | ~74h |
 
-## Sample dataset and walkthrough
+**Dataset:** [songbirdini/V33DA](https://huggingface.co/datasets/songbirdini/V33DA) &nbsp;·&nbsp; **Companion release:** [songbirdini/v33da_pp](https://huggingface.co/datasets/songbirdini/v33da_pp) (V33DA++: overlap and longer-context buckets)
 
-A self-contained 100-event sample ships with the repository at `data/v33da_sample/` (~60 MB, stratified across all three experiments). After a plain `pip install -e .` the notebook at `notebooks/walkthrough.ipynb` loads the sample and visualizes every modality (audio, accelerometer oracle, 3D pose, radio telemetry) for a single event.
+## Sample data
+
+A self-contained 100-event sample ships with the repository at [`data/v33da_sample/`](data/v33da_sample/) (~60 MB, stratified across BP01/BP02/BP05). It contains real parquet rows, multichannel audio WAVs, accelerometer WAVs, composite video clips, and per-experiment camera calibrations — enough to run the loader end-to-end without downloading the full dataset.
+
+### What's in the sample
+
+```
+data/v33da_sample/
+  v33da_sample.parquet        # 100 rows, full V33DA schema
+  audio/<experiment>/...       # 5-channel cage-microphone WAVs
+  accelerometer/<experiment>/...  # On-body vibration WAVs (oracle)
+  clips/<experiment>/...       # Composite multi-view MP4s
+  calibrations/<experiment>/   # Camera intrinsics + extrinsics
+  metadata.json
+  split_summary.json
+```
+
+### Walkthrough notebook
+
+After installing the repo, open the walkthrough notebook to inspect every modality (audio spectrogram, accelerometer oracle, 3D pose, radio telemetry, video) for a single event and to see how 3D keypoints reproject into the camera views using the shipped calibrations:
 
 ```bash
 pip install -e .
-pip install matplotlib jupyter
+pip install matplotlib jupyter soundfile
 jupyter notebook notebooks/walkthrough.ipynb
 ```
 
-To regenerate or resize the sample against the full dataset, use `scripts/build_sample.py`.
+### Loading the sample directly
 
-## Quick start
+```python
+import io, numpy as np, pyarrow.parquet as pq, soundfile as sf
+from pathlib import Path
+
+ROOT = Path("data/v33da_sample")
+table = pq.read_table(ROOT / "v33da_sample.parquet")
+row = table.slice(0, 1).to_pydict()
+
+# 3D pose: (T_frames, N_birds, 5, 3) float32 — 5 keypoints per bird
+kp3d = np.load(io.BytesIO(row["keypoints_3d"][0]))
+
+# Multichannel audio
+audio, sr = sf.read(ROOT / row["audio_path"][0])  # (T, 5) at 24,414 Hz
+
+# Ground-truth caller index (within visible candidates for this event)
+caller = row["vocalizer_idx"][0]
+print(f"Experiment {row['experiment'][0]}, caller idx={caller}, kp3d={kp3d.shape}")
+```
+
+### Rebuilding or resizing the sample
+
+To regenerate from the full dataset (different N, different seed, with or without video):
+
+```bash
+huggingface-cli download songbirdini/V33DA --repo-type dataset --local-dir /tmp/v33da_full
+python scripts/build_sample.py --src /tmp/v33da_full --dst data/v33da_sample --n 100 --include-video
+```
+
+## Quick start (full dataset)
 
 ### 1. Install
 
@@ -116,6 +163,24 @@ Each event provides:
 | Vision-only | PoseMotion, VideoCandidate | No audio; 3D keypoints or RGB crops |
 | Oracle | AccelOracle | On-body accelerometer (solvability ceiling) |
 
+## V33DA++ (companion release)
+
+[V33DA++](https://huggingface.co/datasets/songbirdini/v33da_pp) is an auxiliary extension to the main V33DA benchmark, built from the same recordings and the same 10 birds but covering data **outside** the strict single-vocalizer attribution setting. It is intended for tasks that benefit from overlapping callers or longer temporal context (source separation, vocal activity detection, audio-visual sync, active-speaker detection).
+
+V33DA++ ships three buckets:
+- **`overlap/`** — reviewer-verified events excluded from V33DA because another bird vocalized in the same window. Each sample carries the list of overlapping callers verified from on-body accelerometer channels.
+- **`padded/`** — ±2 s context windows around each V33DA event, with original event onsets and offsets preserved inside the longer window.
+- **`overlap_padded/`** — overlap events with the same ±2 s context.
+
+Download a single bucket:
+
+```bash
+huggingface-cli download songbirdini/v33da_pp --repo-type dataset \
+    --include "padded/*" --local-dir data/v33da_pp
+```
+
+V33DA++ is **not** the benchmark used in the paper's main results tables.
+
 ## Repository structure
 
 ```
@@ -132,7 +197,12 @@ scripts/
   train_whisper_candidate.py # Whisper-based candidate scorer (frozen encoder)
   train_srp_reranker.py      # SRP reranker (precomputed features)
   train_loc_first.py         # Pure localization regression baseline
+  build_sample.py            # Build the 100-event repo sample from full V33DA
   dataset_statistics.py      # Compute dataset statistics
+data/
+  v33da_sample/              # 100-event self-contained sample (~60 MB)
+notebooks/
+  walkthrough.ipynb          # Reviewer walkthrough over the sample
 ```
 
 ## Environment variables
@@ -153,7 +223,7 @@ If you use V33DA, please cite:
 
 ```bibtex
 @unpublished{basha2026v33da,
-  title  = {Who Called? V33DA: A Multimodal Benchmark for Transferable Spatial Vocal Attribution in Social Zebra Finches},
+  title  = {Who Called? V33DA: A Physically Verified Multimodal Benchmark for Vocal Attribution in Zebra Finch Groups},
   author = {Basha, Maris and Wang, Yuhang and Chen, Xiaoran and Cheng, Longbiao and Yapura, Luca and Zai, Anja T. and Salzmann, Mathieu and Hahnloser, Richard},
   year   = {2026},
   note   = {Under review},
