@@ -1,0 +1,102 @@
+{
+  "pass_fail_status": "PASS",
+  "dataset": "/home/songbird/code/v33da/data/v33da",
+  "checks": [
+    {
+      "name": "release",
+      "problems": [],
+      "metadata_num_rows": 33625,
+      "shards": 23,
+      "parquet_rows": 33625,
+      "media_counts": {
+        "audio": 33625,
+        "accelerometer": 33625,
+        "clips": 33625
+      },
+      "status": "PASS"
+    },
+    {
+      "name": "selection",
+      "problems": [],
+      "builder_stats": {
+        "selected": 38033,
+        "overlap-removed": 3784
+      },
+      "selected_groups": {
+        "juvExpBP01/blue": 6771,
+        "juvExpBP01/peach": 2580,
+        "juvExpBP01/red": 4494,
+        "juvExpBP01/white": 4804,
+        "juvExpBP02/blue": 5314,
+        "juvExpBP02/peach": 5049,
+        "juvExpBP02/red": 2245,
+        "juvExpBP05/brown": 68,
+        "juvExpBP05/purple": 2449,
+        "juvExpBP05/yellow": 4259
+      },
+      "per_group": {
+        "juvExpBP01/blue": {
+          "selected": 6771,
+          "released": 5735,
+          "shortfall": 1036,
+          "shortfall_frac": 0.153
+        },
+        "juvExpBP01/peach": {
+          "selected": 2580,
+          "released": 2277,
+          "shortfall": 303,
+          "shortfall_frac": 0.1174
+        },
+        "juvExpBP01/red": {
+          "selected": 4494,
+          "released": 3963,
+          "shortfall": 531,
+          "shortfall_frac": 0.1182
+        },
+        "juvExpBP01/white": {
+          "selected": 4804,
+          "released": 4244,
+          "shortfall": 560,
+          "shortfall_frac": 0.1166
+        },
+        "juvExpBP02/blue": {
+          "selected": 5314,
+          "released": 4923,
+          "shortfall": 391,
+          "shortfall_frac": 0.0736
+        },
+        "juvExpBP02/peach": {
+          "selected": 5049,
+          "released": 4589,
+          "shortfall": 460,
+          "shortfall_frac": 0.0911
+        },
+        "juvExpBP02/red": {
+          "selected": 2245,
+          "released": 2065,
+          "shortfall": 180,
+          "shortfall_frac": 0.0802
+        },
+        "juvExpBP05/brown": {
+          "selected": 68,
+          "released": 56,
+          "shortfall": 12,
+          "shortfall_frac": 0.1765
+        },
+        "juvExpBP05/purple": {
+          "selected": 2449,
+          "released": 2140,
+          "shortfall": 309,
+          "shortfall_frac": 0.1262
+        },
+        "juvExpBP05/yellow": {
+          "selected": 4259,
+          "released": 3633,
+          "shortfall": 626,
+          "shortfall_frac": 0.147
+        }
+      },
+      "status": "PASS"
+    }
+  ]
+}
