@@ -23,7 +23,7 @@ A self-contained 100-event sample ships with the repository at [`data/v33da_samp
 data/v33da_sample/
   v33da_sample.parquet        # 100 rows, full V33DA schema
   audio/<experiment>/...       # 5-channel cage-microphone WAVs
-  accelerometer/<experiment>/...  # On-body vibration WAVs (oracle)
+  accelerometer/<experiment>/...  # On-body vibration WAVs (withheld verification channel)
   clips/<experiment>/...       # Composite multi-view MP4s
   calibrations/<experiment>/   # Camera intrinsics + extrinsics
   metadata.json
@@ -32,7 +32,7 @@ data/v33da_sample/
 
 ### Walkthrough notebook
 
-After installing the repo, open the walkthrough notebook to inspect every modality (audio spectrogram, accelerometer oracle, 3D pose, radio telemetry, video) for a single event and to see how 3D keypoints reproject into the camera views using the shipped calibrations:
+After installing the repo, open the walkthrough notebook to inspect every modality (audio spectrogram, withheld on-body reference, 3D pose, radio telemetry, video) for a single event and to see how 3D keypoints reproject into the camera views using the shipped calibrations:
 
 ```bash
 pip install -e .
@@ -142,7 +142,7 @@ Each event provides:
 | **Head orientation** | Unit vector from head center to beak | `(N_birds, 3)` |
 | **Radio telemetry** | 12D summary + temporal signal per bird | `(N_birds, 12)` + `(N_birds, T_radio)` |
 | **Video** | Multi-view synchronized RGB (top, back, side) | composite frame |
-| **Accelerometer** | On-body vibration (oracle only, withheld from models) | `(N_birds, T)` |
+| **Accelerometer** | On-body vibration (withheld from models; used only by the on-body reference) | `(N_birds, T)` |
 
 ## Evaluation regimes
 
@@ -161,7 +161,7 @@ Each event provides:
 | Candidate-centric | SELDnet++, PairRank, SpatialScorer, Contrastive, Whisper candidate | Score visible candidates directly |
 | SELD / loc-first | ACCDOA, EINV2, CST-former, BeamFusion, AudioANN, RadioANN | Localize first, then assign nearest candidate |
 | Vision-only | PoseMotion, VideoCandidate | No audio; 3D keypoints or RGB crops |
-| Oracle | AccelOracle | On-body accelerometer (solvability ceiling) |
+| Oracle | AccelOracle | On-body accelerometer (withheld on-body reference, ceiling) |
 
 ## V33DA++ (companion release)
 
@@ -222,11 +222,11 @@ All experiments in the paper were run on a single NVIDIA RTX 3090 (24 GB). Total
 If you use V33DA, please cite:
 
 ```bibtex
-@unpublished{basha2026v33da,
+@inproceedings{basha2026v33da,
   title  = {Who Called? V33DA: A Physically Verified Multimodal Benchmark for Vocal Attribution in Zebra Finch Groups},
   author = {Basha, Maris and Wang, Yuhang and Chen, Xiaoran and Cheng, Longbiao and Yapura, Luca and Zai, Anja T. and Salzmann, Mathieu and Hahnloser, Richard},
   year   = {2026},
-  note   = {Under review},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS), Evaluations and Datasets Track},
 }
 ```
 
