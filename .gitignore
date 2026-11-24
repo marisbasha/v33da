@@ -8,8 +8,8 @@ build/
 *.so
 
 # Data (downloaded separately, except the tiny committed sample)
-data/*
-!data/v33da_sample/
+/data/*
+!/data/v33da_sample/
 splits/
 cache/
 runs/
